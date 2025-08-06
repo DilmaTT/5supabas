@@ -14,7 +14,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { AuthDialog } from "./AuthDialog";
 import { Settings, Download, Upload, LogOut, CloudUpload, CloudDownload } from "lucide-react";
-import { importDataFromFile, exportDataToFile, syncDataToSupabase, loadDataFromSupabase } from "@/lib/data-manager";
+import { importDataFromFile, exportDataToFile, syncDataToSupabase, loadDataFromSupabase, downloadCloudBackup } from "@/lib/data-manager";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -99,6 +99,10 @@ export const UserMenu = ({ isMobileMode }: UserMenuProps) => {
                 <Download className="mr-2 h-4 w-4" />
                 Экспорт в файл
               </Button>
+              <Button variant="outline" onClick={() => { downloadCloudBackup(); closeMobileMenu(); }}>
+                <CloudDownload className="mr-2 h-4 w-4" />
+                Скачать бэкап из облака
+              </Button>
               <hr className="my-2"/>
               <Button variant="destructive" onClick={handleLogout}>
                 <LogOut className="mr-2 h-4 w-4" />
@@ -143,6 +147,10 @@ export const UserMenu = ({ isMobileMode }: UserMenuProps) => {
         <DropdownMenuItem onClick={exportDataToFile}>
           <Download className="mr-2 h-4 w-4" />
           <span>Экспорт в файл</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={downloadCloudBackup}>
+          <CloudDownload className="mr-2 h-4 w-4" />
+          <span>Скачать бэкап из облака</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={logout}>

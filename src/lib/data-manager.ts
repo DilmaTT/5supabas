@@ -282,3 +282,41 @@ export const importDataFromFile = () => {
     importForWeb();
   }
 };
+
+export const downloadCloudBackup = async () => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    alert("Вы должны войти в систему, чтобы скачать бэкап из облака.");
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('user_data')
+      .select('*')
+      .eq('user_id', user.id)
+      .single();
+
+    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+      throw error;
+    }
+
+    if (data) {
+      const appData: AppData = {
+        version: APP_DATA_VERSION,
+        folders: data.folders || [],
+        actionButtons: data.action_buttons || [],
+        trainings: data.trainings || [],
+        statistics: data.statistics || [],
+        charts: data.charts || [],
+        timestamp: data.updated_at || new Date().toISOString(),
+      };
+      exportForWeb(appData);
+    } else {
+      alert("В облаке нет данных для скачивания.");
+    }
+  } catch (error) {
+    console.error("Error downloading cloud backup:", error);
+    alert("Ошибка загрузки бэкапа из облака.");
+  }
+};
