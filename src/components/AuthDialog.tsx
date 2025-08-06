@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,22 +13,15 @@ interface AuthDialogProps {
 }
 
 export const AuthDialog = ({ open, onOpenChange }: AuthDialogProps) => {
-  const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const { login, register } = useAuth();
   const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const isFormInvalid = isLogin
-      ? !email.trim() || !password.trim()
-      : !email.trim() || !password.trim() || !username.trim();
-
-    if (isFormInvalid) {
+    if (!email.trim() || !password.trim()) {
       toast({
         title: "Ошибка",
         description: "Заполните все поля",
@@ -37,25 +31,19 @@ export const AuthDialog = ({ open, onOpenChange }: AuthDialogProps) => {
     }
 
     setLoading(true);
-    
     try {
-      const result = isLogin 
-        ? await login(email.trim(), password)
-        : await register(email.trim(), password, username.trim());
-      
+      const result = await login(email.trim(), password);
       if (result.success) {
         toast({
           title: "Успешно",
-          description: isLogin ? "Вы вошли в систему" : "Аккаунт создан. Проверьте почту для подтверждения.",
+          description: "Вы вошли в систему",
         });
         onOpenChange(false);
-        setEmail('');
-        setPassword('');
-        setUsername('');
+        resetForm();
       } else {
         toast({
           title: "Ошибка",
-          description: result.message || "Произошла неизвестная ошибка",
+          description: result.message,
           variant: "destructive",
         });
       }
@@ -70,76 +58,130 @@ export const AuthDialog = ({ open, onOpenChange }: AuthDialogProps) => {
     }
   };
 
-  const switchMode = () => {
-    setIsLogin(!isLogin);
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password.trim()) {
+      toast({
+        title: "Ошибка",
+        description: "Заполните все поля",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await register(email.trim(), password);
+      if (result.success) {
+        toast({
+          title: "Успешно",
+          description: "Аккаунт создан. Проверьте почту для подтверждения.",
+        });
+        onOpenChange(false);
+        resetForm();
+      } else {
+        toast({
+          title: "Ошибка",
+          description: result.message,
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Ошибка",
+        description: "Произошла ошибка. Попробуйте снова.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetForm = () => {
     setEmail('');
     setPassword('');
-    setUsername('');
+  };
+
+  const handleTabChange = () => {
+    resetForm();
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {isLogin ? 'Вход в аккаунт' : 'Регистрация'}
-          </DialogTitle>
+          <DialogTitle>Доступ к аккаунту</DialogTitle>
+          <DialogDescription>
+            Войдите или зарегистрируйтесь, чтобы сохранять свои диапазоны в облаке.
+          </DialogDescription>
         </DialogHeader>
         
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {!isLogin && (
-            <div className="space-y-2">
-              <Label htmlFor="username">Имя пользователя</Label>
-              <Input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Введите ваше имя"
-                disabled={loading}
-              />
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Введите ваш email"
-              disabled={loading}
-            />
-          </div>
+        <Tabs defaultValue="login" className="w-full" onValueChange={handleTabChange}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="login">Вход</TabsTrigger>
+            <TabsTrigger value="register">Регистрация</TabsTrigger>
+          </TabsList>
           
-          <div className="space-y-2">
-            <Label htmlFor="password">Пароль</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Введите пароль"
-              disabled={loading}
-            />
-          </div>
+          <TabsContent value="login">
+            <form onSubmit={handleLogin} className="space-y-4 pt-4">
+              <div className="space-y-2">
+                <Label htmlFor="login-email">Email</Label>
+                <Input
+                  id="login-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Введите ваш email"
+                  disabled={loading}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="login-password">Пароль</Label>
+                <Input
+                  id="login-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Введите пароль"
+                  disabled={loading}
+                />
+              </div>
+              <Button type="submit" disabled={loading} className="w-full">
+                {loading ? 'Загрузка...' : 'Войти'}
+              </Button>
+            </form>
+          </TabsContent>
           
-          <div className="flex flex-col gap-3">
-            <Button type="submit" disabled={loading} className="w-full">
-              {loading ? 'Загрузка...' : (isLogin ? 'Войти' : 'Зарегистрироваться')}
-            </Button>
-            
-            <Button 
-              type="button" 
-              variant="ghost" 
-              onClick={switchMode}
-              disabled={loading}
-              className="w-full"
-            >
-              {isLogin ? 'Нет аккаунта? Зарегистрироваться' : 'Есть аккаунт? Войти'}
-            </Button>
-          </div>
-        </form>
+          <TabsContent value="register">
+            <form onSubmit={handleRegister} className="space-y-4 pt-4">
+              <div className="space-y-2">
+                <Label htmlFor="register-email">Email</Label>
+                <Input
+                  id="register-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Введите ваш email"
+                  disabled={loading}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="register-password">Пароль</Label>
+                <Input
+                  id="register-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Придумайте пароль"
+                  disabled={loading}
+                />
+              </div>
+              <Button type="submit" disabled={loading} className="w-full">
+                {loading ? 'Загрузка...' : 'Зарегистрироваться'}
+              </Button>
+            </form>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

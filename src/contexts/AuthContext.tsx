@@ -1,23 +1,20 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { Session, User } from '@supabase/supabase-js';
-import { importUserSettings } from '@/lib/data-manager';
+import { supabase } from '@/lib/supabaseClient';
+import { Session } from '@supabase/supabase-js';
+import { loadDataFromSupabase, syncDataToSupabase, clearLocalData } from '@/lib/data-manager';
 
-// Define the Profile type
-export interface Profile {
+interface User {
   id: string;
-  username: string | null;
-  created_at: string;
+  email: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  session: Session | null;
-  profile: Profile | null;
   login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
-  register: (email: string, password: string, username: string) => Promise<{ success: boolean; message?: string }>;
-  logout: () => Promise<void>;
+  register: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  logout: () => void;
   isAuthenticated: boolean;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -32,109 +29,77 @@ export const useAuth = () => {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
-      const currentUser = session?.user ?? null;
-      setUser(currentUser);
-
-      if (currentUser) {
-        // Fetch profile on auth state change
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', currentUser.id)
-          .single();
-
-        if (error && error.code !== 'PGRST116') { // 'PGRST116' is when no rows are found
-          console.error('Error fetching profile:', error);
-          setProfile(null);
-        } else {
-          setProfile(data);
-        }
-        
-        // After profile is handled, sync user settings.
-        // This is not awaited to prevent blocking UI updates.
-        // The function handles its own notifications and reloads.
-        importUserSettings();
-
-      } else {
-        // Clear profile on logout
-        setProfile(null);
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUser({ id: session.user.id, email: session.user.email! });
       }
       setLoading(false);
-    });
+    };
+    
+    getSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session: Session | null) => {
+        if (session?.user) {
+          const currentUser = { id: session.user.id, email: session.user.email! };
+          setUser(currentUser);
+          if (_event === 'SIGNED_IN') {
+            await loadDataFromSupabase();
+          }
+        } else {
+          setUser(null);
+          if (_event === 'SIGNED_OUT') {
+            clearLocalData();
+          }
+        }
+      }
+    );
 
     return () => {
-      subscription?.unsubscribe();
+      subscription.unsubscribe();
     };
   }, []);
 
-  const register = async (email: string, password: string, username: string): Promise<{ success: boolean; message?: string }> => {
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (signUpError) {
-      return { success: false, message: signUpError.message };
+  const register = async (email: string, password: string): Promise<{ success: boolean; message?: string }> => {
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      return { success: false, message: 'Ошибка регистрации: ' + error.message };
     }
-
-    if (!authData.user) {
-      return { success: false, message: "Registration successful, but no user data returned." };
+    if (data.user) {
+      // Create an initial empty record in Supabase for the new user
+      await syncDataToSupabase(false); // Don't show alert on initial sync
     }
-
-    // Insert profile after successful sign-up
-    const { error: profileError } = await supabase.from('profiles').insert({
-      id: authData.user.id,
-      username: username,
-    });
-
-    if (profileError) {
-      console.error("Error creating profile:", profileError);
-      // NOTE: This is a simplified error handling. In a real app, you might want to
-      // delete the auth user if profile creation fails, or use a DB trigger.
-      return { success: false, message: `User created, but failed to create profile: ${profileError.message}` };
-    }
-
     return { success: true };
   };
 
   const login = async (email: string, password: string): Promise<{ success: boolean; message?: string }> => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
-      return { success: false, message: error.message };
+      return { success: false, message: 'Ошибка входа: ' + error.message };
     }
-    // Profile and settings will be fetched by the onAuthStateChange listener
     return { success: true };
   };
 
   const logout = async () => {
     await supabase.auth.signOut();
-    // Profile will be cleared by the onAuthStateChange listener
-  };
-
-  const value = {
-    user,
-    session,
-    profile,
-    login,
-    register,
-    logout,
-    isAuthenticated: !!user,
+    // The onAuthStateChange listener will handle clearing data and state
   };
 
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        register,
+        logout,
+        isAuthenticated: !!user,
+        loading,
+      }}
+    >
       {!loading && children}
     </AuthContext.Provider>
   );

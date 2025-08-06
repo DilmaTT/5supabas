@@ -1,135 +1,284 @@
 // src/lib/data-manager.ts
-import { supabase } from './supabase';
+import { supabase } from './supabaseClient';
 
-// The AppData interface defines the structure of our user's settings.
+// --- Data Structure ---
 interface AppData {
+  version: number;
   folders: any[];
   actionButtons: any[];
   trainings: any[];
   statistics: any[];
   charts: any[];
+  timestamp: string;
 }
 
+const APP_DATA_VERSION = 1;
+
+// --- Helper Functions ---
+const isTauri = (): boolean => '__TAURI__' in window;
+const isCapacitor = (): boolean => !!(window as any).Capacitor?.isNativePlatform();
+
 /**
- * Gathers all relevant data from localStorage.
- * This is the data that will be synced with Supabase.
+ * Gathers all relevant data from localStorage into a single object.
  */
-const gatherDataFromLocalStorage = (): AppData => {
+const gatherData = (): AppData => {
   const folders = JSON.parse(localStorage.getItem('poker-ranges-folders') || '[]');
   const actionButtons = JSON.parse(localStorage.getItem('poker-ranges-actions') || '[]');
   const trainings = JSON.parse(localStorage.getItem('training-sessions') || '[]');
   const statistics = JSON.parse(localStorage.getItem('training-statistics') || '[]');
   const charts = JSON.parse(localStorage.getItem('userCharts') || '[]');
 
-  return { folders, actionButtons, trainings, statistics, charts };
+  return {
+    version: APP_DATA_VERSION,
+    folders,
+    actionButtons,
+    trainings,
+    statistics,
+    charts,
+    timestamp: new Date().toISOString(),
+  };
 };
 
 /**
- * Applies synced data to localStorage and reloads the application.
+ * Applies imported data to the application.
  */
-const applyDataToLocalStorage = (data: Partial<AppData>) => {
-  // We only apply data if it's provided to avoid overwriting with undefined.
-  if (data.folders) localStorage.setItem('poker-ranges-folders', JSON.stringify(data.folders));
-  if (data.actionButtons) localStorage.setItem('poker-ranges-actions', JSON.stringify(data.actionButtons));
-  if (data.trainings) localStorage.setItem('training-sessions', JSON.stringify(data.trainings));
-  if (data.statistics) localStorage.setItem('training-statistics', JSON.stringify(data.statistics));
-  if (data.charts) localStorage.setItem('userCharts', JSON.stringify(data.charts));
-
-  alert("Настройки успешно синхронизированы! Приложение будет перезагружено.");
-  
-  setTimeout(() => window.location.reload(), 250);
-};
-
-/**
- * Uploads the current user settings from localStorage to Supabase.
- * This function can be used for manual "Save to Cloud" functionality.
- */
-export const exportUserSettings = async () => {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    alert("Для сохранения настроек в облако необходимо войти в аккаунт.");
+const applyData = (data: AppData, reload: boolean = true) => {
+  if (!data || data.version > APP_DATA_VERSION) {
+    console.error("Invalid or newer data format.");
+    alert("Ошибка: Неверный или более новый формат файла настроек, который не поддерживается этой версией приложения.");
     return;
   }
 
-  console.log("Uploading settings to Supabase for user:", user.id);
-  const settingsData = gatherDataFromLocalStorage();
+  localStorage.setItem('poker-ranges-folders', JSON.stringify(data.folders || []));
+  localStorage.setItem('poker-ranges-actions', JSON.stringify(data.actionButtons || []));
+  localStorage.setItem('training-sessions', JSON.stringify(data.trainings || []));
+  localStorage.setItem('training-statistics', JSON.stringify(data.statistics || []));
+  localStorage.setItem('userCharts', JSON.stringify(data.charts || []));
+
+  if (reload) {
+    alert("Настройки успешно импортированы! Приложение будет перезагружено.");
+    setTimeout(() => {
+      window.location.reload();
+    }, 250);
+  }
+};
+
+// --- Supabase Data Management ---
+
+export const syncDataToSupabase = async (showAlert = true) => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    if (showAlert) alert("Вы должны войти в систему для синхронизации данных.");
+    return;
+  }
+
+  const appData = gatherData();
+  const { version, timestamp, ...userData } = appData;
 
   const { error } = await supabase
-    .from('user_settings')
+    .from('user_data')
     .upsert({
       user_id: user.id,
-      ...settingsData,
+      folders: userData.folders,
+      action_buttons: userData.actionButtons,
+      trainings: userData.trainings,
+      statistics: userData.statistics,
+      charts: userData.charts,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id' });
 
   if (error) {
-    console.error('Error uploading settings:', error);
-    alert(`Ошибка сохранения настроек: ${error.message}`);
+    console.error("Error syncing data to Supabase:", error);
+    if (showAlert) alert("Ошибка синхронизации данных с облаком.");
   } else {
-    console.log('Settings uploaded successfully.');
-    alert('Настройки успешно сохранены в облаке!');
+    if (showAlert) alert("Данные успешно сохранены в облаке!");
   }
 };
 
-/**
- * Fetches user settings from Supabase and applies them to localStorage.
- * This function replaces the old file import functionality and is called on login.
- */
-export const importUserSettings = async () => {
+export const loadDataFromSupabase = async () => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
-    console.log("User not logged in, cannot import settings.");
+    console.log("No user session, cannot load data from Supabase.");
     return;
   }
 
-  console.log("Importing settings from Supabase for user:", user.id);
-
   const { data, error } = await supabase
-    .from('user_settings')
+    .from('user_data')
     .select('*')
     .eq('user_id', user.id)
     .single();
 
-  if (error && error.code !== 'PGRST116') { // 'PGRST116' means no rows found
-    console.error('Error importing settings:', error);
-    alert(`Ошибка загрузки настроек: ${error.message}`);
+  if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+    console.error("Error loading data from Supabase:", error);
+    alert("Ошибка загрузки данных из облака.");
     return;
   }
 
   if (data) {
-    console.log("Settings found in Supabase, applying to local storage.");
-    const { user_id, updated_at, ...settingsData } = data;
-    applyDataToLocalStorage(settingsData);
-  } else {
-    console.log("No settings found in Supabase for this user. Checking for local data to perform initial sync.");
-    const localData = gatherDataFromLocalStorage();
-    const hasLocalData = Object.values(localData).some(arr => arr.length > 0);
+    const localTimestamp = localStorage.getItem('poker-data-timestamp');
+    const cloudTimestamp = data.updated_at;
 
-    if (hasLocalData) {
-      console.log("Local data found. Performing initial upload.");
-      await uploadInitialSettings(user.id, localData);
+    if (!localTimestamp || new Date(cloudTimestamp) > new Date(localTimestamp)) {
+        if (confirm("Найдены более новые данные в облаке. Загрузить их? Это перезапишет ваши текущие локальные несохраненные данные.")) {
+            const appData: AppData = {
+              version: APP_DATA_VERSION,
+              folders: data.folders || [],
+              actionButtons: data.action_buttons || [],
+              trainings: data.trainings || [],
+              statistics: data.statistics || [],
+              charts: data.charts || [],
+              timestamp: data.updated_at || new Date().toISOString(),
+            };
+            applyData(appData); // This will reload the page
+        }
     } else {
-      console.log("No remote or local settings found. Fresh start.");
+        alert("Ваши локальные данные актуальны.");
+    }
+  } else {
+    console.log("No data found in Supabase for this user. Using local data.");
+    if (confirm("В облаке нет данных. Хотите сохранить текущие локальные данные в облако?")) {
+        await syncDataToSupabase();
     }
   }
 };
 
-/**
- * Helper for the very first sync from local to remote.
- */
-const uploadInitialSettings = async (userId: string, settingsData: AppData) => {
-    const { error } = await supabase
-    .from('user_settings')
-    .upsert({
-      user_id: userId,
-      ...settingsData,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' });
+export const clearLocalData = () => {
+  localStorage.removeItem('poker-ranges-folders');
+  localStorage.removeItem('poker-ranges-actions');
+  localStorage.removeItem('training-sessions');
+  localStorage.removeItem('training-statistics');
+  localStorage.removeItem('userCharts');
+  localStorage.removeItem('poker-data-timestamp');
+  window.location.reload();
+};
 
-  if (error) {
-    console.error('Error on initial upload:', error);
-    alert(`Ошибка первоначальной синхронизации: ${error.message}`);
-  } else {
-    alert("Ваши локальные настройки были успешно сохранены в облаке!");
+
+// --- Platform-Specific File Export Implementations ---
+
+const exportForWeb = (appData: AppData) => {
+  const dataStr = JSON.stringify(appData, null, 2);
+  const blob = new Blob([dataStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `poker-settings-backup-${new Date().toISOString().split('T')[0]}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+const exportForTauri = async (appData: AppData) => {
+  try {
+    const { save } = await import('@tauri-apps/api/dialog');
+    const { writeTextFile } = await import('@tauri-apps/api/fs');
+    
+    const filePath = await save({
+      defaultPath: `poker-settings-backup-${new Date().toISOString().split('T')[0]}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    });
+
+    if (filePath) {
+      const dataStr = JSON.stringify(appData, null, 2);
+      await writeTextFile(filePath, dataStr);
+      alert('Настройки успешно экспортированы!');
+    }
+  } catch (error) {
+    console.error('Failed to export settings via Tauri:', error);
+    alert('Ошибка экспорта настроек.');
   }
-}
+};
+
+const exportForCapacitor = async (appData: AppData) => {
+  try {
+    const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
+    const permissionStatus = await Filesystem.requestPermissions();
+    if (permissionStatus.publicStorage !== 'granted') {
+      alert('Для экспорта настроек необходимо разрешение на доступ к хранилищу.');
+      return;
+    }
+    const dataStr = JSON.stringify(appData, null, 2);
+    const fileName = `poker-settings-backup-${new Date().toISOString()}.json`;
+    await Filesystem.writeFile({
+      path: fileName,
+      data: dataStr,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8,
+    });
+    alert(`Настройки сохранены в папку "Документы" под именем: ${fileName}`);
+  } catch (error) {
+    console.error('Failed to export settings via Capacitor:', error);
+    alert('Ошибка экспорта настроек. Проверьте разрешения приложения.');
+  }
+};
+
+// --- Platform-Specific File Import Implementations ---
+
+const importForWeb = () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json';
+  input.onchange = (e: Event) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = JSON.parse(event.target?.result as string);
+          applyData(data);
+        } catch (err) {
+          console.error("Error parsing JSON file.", err);
+          alert("Ошибка: Не удалось прочитать файл.");
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+  input.click();
+};
+
+const importForTauri = async () => {
+  try {
+    const { open } = await import('@tauri-apps/api/dialog');
+    const { readTextFile } = await import('@tauri-apps/api/fs');
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    });
+    if (typeof selected === 'string' && selected) {
+      const contents = await readTextFile(selected);
+      const data = JSON.parse(contents);
+      applyData(data);
+    }
+  } catch (error) {
+    console.error('Failed to import settings via Tauri:', error);
+    alert('Ошибка импорта настроек.');
+  }
+};
+
+const importForCapacitor = () => {
+  importForWeb();
+};
+
+// --- Public API for File I/O ---
+
+export const exportDataToFile = () => {
+  const appData = gatherData();
+  if (isTauri()) {
+    exportForTauri(appData);
+  } else if (isCapacitor()) {
+    exportForCapacitor(appData);
+  } else {
+    exportForWeb(appData);
+  }
+};
+
+export const importDataFromFile = () => {
+  if (isTauri()) {
+    importForTauri();
+  } else if (isCapacitor()) {
+    importForCapacitor();
+  } else {
+    importForWeb();
+  }
+};
